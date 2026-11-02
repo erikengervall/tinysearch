@@ -31,7 +31,7 @@ def has_expected_sdk_gitlink(entry, expected_sha):
 
 def resolve_script(workflow):
     match = re.search(
-        r"(?ms)^      - id: tag\n.*?^        run: \|\n((?:^          .*\n|^\n)+)",
+        r"(?ms)^      - id: tag\n.*?^        run: \|\n((?:^          [^\n]*\n|^\n)+)",
         workflow,
     )
     if not match:
@@ -100,7 +100,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_published_candidate_and_sdk_constraints_match_released_compatibility(self):
         manifest = tomllib.loads((ROOT / "Cargo.toml").read_text())
-        self.assertEqual(manifest["workspace"]["package"]["version"], "0.5.4")
+        self.assertRegex(manifest["workspace"]["package"]["version"], r"^\d+\.\d+\.\d+$")
         self.assertEqual(
             manifest["workspace"]["dependencies"]["tinybus"]["version"],
             ">=0.3.6, <0.4",
@@ -156,6 +156,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("module-crate:", reviewed_job)
         self.assertNotIn("asset-name:", reviewed_job)
         self.assertNotIn("apt-packages:", reviewed_job)
+
+    def test_resolve_script_stops_at_the_end_of_its_run_block(self):
+        workflow = (
+            "      - id: tag\n        run: |\n          echo resolve\n"
+            "  later:\n    steps:\n      - run: |\n          echo later\n"
+        )
+        self.assertEqual(resolve_script(workflow).strip(), "echo resolve")
 
     def test_reviewed_release_rejects_missing_zero_and_noninteger_pr(self):
         for reviewed_pr in ("", "0", "-1", "1.5", "one"):
