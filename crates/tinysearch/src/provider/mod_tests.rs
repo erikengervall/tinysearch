@@ -102,6 +102,28 @@ fn normalization_fills_limit_with_valid_results_after_invalid_entries() {
 }
 
 #[test]
+fn exa_search_highlights_become_the_result_snippet() {
+    // Exa `/search` with inline highlights returns a `highlights` array per
+    // result; the first highlight is surfaced as the snippet, so a search that
+    // asked for highlights carries enough content to answer without a separate
+    // contents fetch.
+    let response = normalize(
+        "exa",
+        "exa_search",
+        &json!({"results":[{
+            "url":"https://example.test/a",
+            "title":"A",
+            "highlights":["the key sentence that answers the query","second"]
+        }]}),
+    );
+    assert_eq!(response.results.len(), 1);
+    assert_eq!(
+        response.results[0].snippet.as_deref(),
+        Some("the key sentence that answers the query")
+    );
+}
+
+#[test]
 fn provider_urls_reject_credentials_queries_and_non_http_schemes() -> TestResult<()> {
     for base in [
         "not a url",
