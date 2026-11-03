@@ -12,7 +12,6 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = ROOT / ".github/workflows/release.yml"
 CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
-REVIEWED_RELEASE_SHA = "6ed83b04aab2d8977ec62e966cb914531e534fa4"
 ORDINARY_RELEASE_SHA = "4adc1080fb495098e7af1aade82ed7e6e3c69bb7"
 TINYBUS_SDK_SHA = "34d3bd6dda099e54cee11a2f96f28a21da9e0759"
 
@@ -49,16 +48,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         cls.ci_workflow = CI_WORKFLOW.read_text()
         cls.script = resolve_script(cls.workflow)
 
-    def run_resolve(self, mode="main", reviewed_pr="", ref="refs/heads/main"):
+    def run_resolve(self, ref="refs/heads/main", **extra):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "output"
             env = dict(
                 os.environ,
                 TAG="v0.5.2",
-                RELEASE_MODE=mode,
-                REVIEWED_PR=reviewed_pr,
                 GITHUB_REF=ref,
                 GITHUB_OUTPUT=str(output),
+                **extra,
             )
             result = subprocess.run(
                 ["bash", "-c", self.script],
@@ -71,11 +69,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_ordinary_tag_release_route_and_module_ci_pin_are_preserved(self):
         self.assertIn("push:\n    tags: ['v*']", self.workflow)
         self.assertIn("github.event_name == 'push' && github.ref_name || inputs.tag", self.workflow)
-        self.assertIn(
-            "github.event_name == 'push' && 'main' || inputs.release_mode",
-            self.workflow,
-        )
-        self.assertIn("release_mode=main", self.run_resolve("main")[1])
+        result, output = self.run_resolve()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, "tag=v0.5.2\nversion=0.5.2\n")
         self.assertIn(
             f"uses: tinyhumansai/.github/.github/workflows/module-release.yml@{ORDINARY_RELEASE_SHA}",
             self.workflow,
@@ -130,32 +126,14 @@ class ReleaseWorkflowTests(unittest.TestCase):
             )
         )
 
-    def test_reviewed_release_requires_positive_pr_on_main_and_uses_fixed_profile(self):
-        result, output = self.run_resolve("reviewed-epic", "83")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("tag=v0.5.2", output)
-        self.assertIn("version=0.5.2", output)
-        self.assertIn("release_mode=reviewed-epic", output)
-        self.assertIn("reviewed_pr=83", output)
-        self.assertIn(
-            "module-reviewed-epic-release.yml@" + REVIEWED_RELEASE_SHA,
-            self.workflow,
-        )
-        reviewed_job = self.workflow.split("  module-reviewed-epic-release:\n", 1)[1]
-        self.assertIn("pull-requests: read", reviewed_job)
-        self.assertIn("checks: read", reviewed_job)
-        self.assertIn("actions: read", reviewed_job)
-        ordinary_job = self.workflow.split("  module-release:\n", 1)[1].split(
-            "  module-reviewed-epic-release:", 1
-        )[0]
-        self.assertIn("module-crate: tinysearch", ordinary_job)
-        self.assertIn(
-            "reviewed-pr: ${{ fromJSON(needs.resolve.outputs.reviewed_pr)",
-            reviewed_job,
-        )
-        self.assertNotIn("module-crate:", reviewed_job)
-        self.assertNotIn("asset-name:", reviewed_job)
-        self.assertNotIn("apt-packages:", reviewed_job)
+    def test_a_dispatch_names_only_a_tag_and_no_reviewed_epic_path_remains(self):
+        # Releases come only from official main, so there is no mode to choose.
+        inputs = self.workflow.split("    inputs:\n", 1)[1].split("  push:\n", 1)[0]
+        self.assertEqual(re.findall(r"(?m)^      (\w+):$", inputs), ["tag"])
+        self.assertNotIn("reviewed-epic", self.workflow)
+        self.assertNotIn("reviewed_pr", self.workflow)
+        self.assertNotIn("release_mode", self.workflow)
+        self.assertEqual(self.workflow.count("uses: tinyhumansai/.github/"), 1)
 
     def test_resolve_script_stops_at_the_end_of_its_run_block(self):
         workflow = (
@@ -164,20 +142,18 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(resolve_script(workflow).strip(), "echo resolve")
 
-    def test_reviewed_release_rejects_missing_zero_and_noninteger_pr(self):
-        for reviewed_pr in ("", "0", "-1", "1.5", "one"):
-            with self.subTest(reviewed_pr=reviewed_pr):
-                result, _ = self.run_resolve("reviewed-epic", reviewed_pr)
-                self.assertNotEqual(result.returncode, 0)
-
-    def test_reviewed_release_accepts_dispatch_from_canonical_epic_branch(self):
+    def test_an_epic_dispatch_is_refused_a_reviewed_release(self):
+        # The old inputs are ignored: the resolver only names the tag, and the
+        # one release job is the ordinary module release.
         result, output = self.run_resolve(
-            "reviewed-epic", "83", "refs/heads/epic/8056-modules-wiring"
+            "refs/heads/epic/8056-modules-wiring",
+            RELEASE_MODE="reviewed-epic",
+            REVIEWED_PR="83",
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("release_mode=reviewed-epic", output)
-        self.assertIn("reviewed_pr=83", output)
-
+        self.assertEqual(output, "tag=v0.5.2\nversion=0.5.2\n")
+        jobs = re.findall(r"(?m)^  ([\w-]+):$", self.workflow.split("\njobs:\n", 1)[1])
+        self.assertEqual(jobs, ["resolve", "module-release"])
 
 if __name__ == "__main__":
     unittest.main()
