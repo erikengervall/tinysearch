@@ -140,6 +140,10 @@ fn result_count(args: &Map<String, Value>) -> Value {
 
 /// Translates generic role arguments into `provider`'s own tool arguments,
 /// keeping only the fields the provider tool declares.
+///
+/// The search role defaults `include_highlights` on, so a provider that
+/// supports inline highlights (Exa) returns query-relevant snippets with each
+/// result and the caller can answer without a follow-up contents fetch.
 pub(super) fn provider_arguments(
     role: Role,
     provider: &str,
@@ -160,7 +164,21 @@ pub(super) fn provider_arguments(
             } else {
                 "max_results"
             };
-            json!({"query":get("query"), count_field:result_count(args)})
+            // Ask for query-relevant highlights inline so the search result
+            // carries enough content to answer without a separate contents
+            // fetch (one fewer model round trip). Providers whose tool does not
+            // declare `include_highlights` drop it in the `retain` below, so
+            // only providers that support it (Exa) are affected; a caller may
+            // still override the default by passing the field itself.
+            let highlights = args
+                .get("include_highlights")
+                .cloned()
+                .unwrap_or(Value::Bool(true));
+            json!({
+                "query":get("query"),
+                count_field:result_count(args),
+                "include_highlights":highlights
+            })
         }
         // Parallel answers through its chat completions API.
         Role::Answer if provider == "parallel" => json!({

@@ -183,6 +183,40 @@ async fn search_uses_the_first_provider_and_translates_arguments() -> Result<()>
 }
 
 #[tokio::test]
+async fn direct_exa_search_requests_inline_highlights() -> Result<()> {
+    // Exa on its own direct route, as Chottu runs it. The search role should
+    // ask for highlights inline so the result carries snippets and no separate
+    // contents fetch (an extra model round trip) is needed to answer.
+    let fixture = fixture(&[], |config| {
+        config.providers.insert(
+            "exa".into(),
+            ProviderConfig {
+                credential: Some("key".into()),
+                ..ProviderConfig::default()
+            },
+        );
+    });
+    let response = fixture
+        .service
+        .execute_tool(call(
+            tools::WEB_SEARCH,
+            json!({"query":"rust","max_results":3}),
+        ))
+        .await?;
+    assert_eq!(response.provider, "exa");
+    let sent = fixture.calls("exa");
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].name, "exa_search");
+    assert_eq!(
+        sent[0].arguments.get("include_highlights"),
+        Some(&json!(true))
+    );
+    assert_eq!(sent[0].arguments.get("query"), Some(&json!("rust")));
+    assert_eq!(sent[0].arguments.get("max_results"), Some(&json!(3)));
+    Ok(())
+}
+
+#[tokio::test]
 async fn search_falls_back_in_order_past_provider_side_failures() -> Result<()> {
     let fixture = fixture(
         &[("exa", broke), ("brave", throttled), ("tavily", down)],

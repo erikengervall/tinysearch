@@ -119,9 +119,11 @@ pub fn role_tool_specs(
     let (description, properties, required): (String, Value, &[&str]) = match role {
         Role::Search => (
             format!(
-                "Search the web and get ranked result links with short snippets. Use it to find \
-                 sources, current information, or pages to read next. Backed by: {backed_by} \
-                 (tried in that order; later providers are fallbacks)."
+                "Search the web and get ranked results, each with a query-relevant snippet of \
+                 the page's content. Use it to find sources and current information, and answer \
+                 directly from the snippets when they suffice; fetch a page's full contents only \
+                 when the snippets are not enough. Backed by: {backed_by} (tried in that order; \
+                 later providers are fallbacks)."
             ),
             // `limit` is accepted as an alias: models carry it over from
             // the other list-style tools beside this one, and rejecting it
