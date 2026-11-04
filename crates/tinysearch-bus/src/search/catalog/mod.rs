@@ -127,7 +127,7 @@ fn direct_provider_specs() -> BTreeMap<String, Vec<ToolSpec>> {
         tool(
             "exa_search",
             "Search with Exa",
-            json!({"query":text,"max_results":{"type":"integer","minimum":1,"maximum":20},"type":{"type":"string","enum":["auto","instant","fast","deep-lite","deep","deep-reasoning"]},"category":text,"include_domains":urls(20),"exclude_domains":urls(20),"start_published_date":text,"end_published_date":text,"include_text":{"type":"boolean"},"include_highlights":{"type":"boolean"}}),
+            json!({"query":text,"max_results":{"type":"integer","minimum":1,"maximum":20},"type":{"type":"string","enum":["auto","lite","instant","fast","deep-lite","deep","deep-reasoning"]},"category":text,"include_domains":urls(20),"exclude_domains":urls(20),"start_published_date":text,"end_published_date":text,"include_text":{"type":"boolean"},"include_highlights":{"type":"boolean"}}),
             &["query"],
         ),
         tool(
