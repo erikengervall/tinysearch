@@ -693,7 +693,11 @@ async fn gemini_grounding_normalizes_supported_chunks_first() -> TestResult<()> 
     let sent = server.await??;
     assert_eq!(
         sent_body(&sent)?,
-        json!({"contents":[{"parts":[{"text":"is rust fast"}]}],"tools":[{"googleSearch":{}}]})
+        json!({
+            "contents":[{"parts":[{"text":"is rust fast"}]}],
+            "tools":[{"googleSearch":{}}],
+            "generationConfig":{"thinkingConfig":{"thinkingLevel":"low"}}
+        })
     );
     assert_eq!(response.answer.as_deref(), Some("Rust is fast."));
     assert_eq!(
@@ -777,6 +781,39 @@ async fn direct_gemini_keeps_backend_headers_off_request() -> TestResult<()> {
     assert!(!sent.to_ascii_lowercase().contains("x-api-key:"));
     assert!(sent.contains("\"google_search\":{}"));
     assert_eq!(response.answer.as_deref(), Some("answer"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn gemini_keeps_a_chosen_models_own_thinking_default() -> TestResult<()> {
+    // `low` would raise a model whose default is `minimal`, and older models
+    // refuse `thinkingLevel` outright, so only the default model carries it.
+    let (url, server) = mock(200, json!({"candidates":[]})).await?;
+    let provider = BuiltinProvider {
+        name: "gemini",
+        client: Client::new(),
+    };
+    let config = ProviderConfig {
+        route: ProviderRoute::Direct,
+        credential: Some("google-key".into()),
+        base_url: Some(url),
+        ..ProviderConfig::default()
+    };
+    provider
+        .run(
+            &config,
+            &backend("http://unused".into(), BackendAuthMode::ApiKey),
+            &request(
+                "gemini_agentic_search",
+                json!({"query":"question","model":"gemini-3.5-flash-lite"}),
+            ),
+        )
+        .await?;
+    let sent = server.await??;
+    assert_eq!(
+        sent_body(&sent)?,
+        json!({"contents":[{"parts":[{"text":"question"}]}],"tools":[{"google_search":{}}]})
+    );
     Ok(())
 }
 

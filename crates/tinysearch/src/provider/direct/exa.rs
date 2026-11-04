@@ -4,6 +4,10 @@ use reqwest::Method;
 use serde_json::{Value, json};
 use std::time::Duration;
 
+/// The search type sent unless the caller chose one: Exa's low-latency tier
+/// for interactive use. Its own default, `auto`, trades speed for quality.
+const DEFAULT_SEARCH_TYPE: &str = "lite";
+
 pub(super) fn prepare(request: &ExecuteToolRequest, key: &str) -> Result<Prepared> {
     let (path, body) = exa_body(request)?;
     Ok((
@@ -23,7 +27,11 @@ pub(super) fn exa_body(request: &ExecuteToolRequest) -> Result<(&'static str, Va
     let (path, mut body) = match request.name.as_str() {
         "exa_search" => (
             "/search",
-            json!({"query":required_string(args,"query")?,"numResults":count(args,"max_results")}),
+            json!({
+                "query":required_string(args,"query")?,
+                "numResults":count(args,"max_results"),
+                "type":DEFAULT_SEARCH_TYPE
+            }),
         ),
         "exa_find_similar" => (
             "/findSimilar",
@@ -88,3 +96,7 @@ pub(super) fn exa_body(request: &ExecuteToolRequest) -> Result<(&'static str, Va
     }
     Ok((path, body))
 }
+
+#[cfg(test)]
+#[path = "exa_tests.rs"]
+mod tests;

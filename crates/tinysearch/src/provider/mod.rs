@@ -7,6 +7,12 @@ use reqwest::{Client, Method};
 use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
+/// The grounded-search model used unless the caller names one.
+const DEFAULT_GEMINI_MODEL: &str = "gemini-3.8-flash";
+/// The default model's thinking level. Search is interactive, so it runs below
+/// the model's own `medium`. Other models keep their defaults: `low` would
+/// raise one that defaults to `minimal`, and older models refuse the field.
+const DEFAULT_GEMINI_THINKING_LEVEL: &str = "low";
 const MAX_RESULTS: usize = 20;
 const MAX_CITATIONS: usize = 40;
 const MAX_ANSWER_CHARS: usize = 12_000;
@@ -164,7 +170,7 @@ impl BuiltinProvider {
             .arguments
             .get("model")
             .and_then(Value::as_str)
-            .unwrap_or("gemini-3.8-flash");
+            .unwrap_or(DEFAULT_GEMINI_MODEL);
         if !model
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
@@ -176,7 +182,11 @@ impl BuiltinProvider {
         } else {
             json!([{"google_search":{}}])
         };
-        let body = json!({"contents":[{"parts":[{"text":query}]}],"tools":tools});
+        let mut body = json!({"contents":[{"parts":[{"text":query}]}],"tools":tools});
+        if model == DEFAULT_GEMINI_MODEL {
+            body["generationConfig"] =
+                json!({"thinkingConfig":{"thinkingLevel":DEFAULT_GEMINI_THINKING_LEVEL}});
+        }
         let (url, auth) = match config.route {
             ProviderRoute::Backend => (
                 backend_url(

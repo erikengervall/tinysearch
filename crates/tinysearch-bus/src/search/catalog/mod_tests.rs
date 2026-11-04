@@ -296,6 +296,21 @@ fn backend_route_narrows_exa_search_and_gemini_models() {
     );
 }
 
+#[test]
+fn exa_search_offers_the_lite_type() {
+    let mut config = SearchConfig::default();
+    config.providers.insert("exa".into(), keyed("key"));
+    let available = configured_provider_tools(&config, &provider_tool_specs());
+    let exa_search = &available["exa"][0];
+    assert_eq!(exa_search.name, "exa_search");
+    let types = &exa_search.parameters["properties"]["type"]["enum"];
+    assert!(
+        types
+            .as_array()
+            .is_some_and(|types| types.contains(&json!("lite")))
+    );
+}
+
 fn role_config() -> SearchConfig {
     let mut config = SearchConfig::default();
     config.backend.credential = Some("session".into());
