@@ -120,12 +120,17 @@ and `/answer` with `x-api-key`. On the backend route they call
 `/agent-integrations/exa/{search,findSimilar,contents,answer}`. The backend's
 search takes only `{objective, searchQueries}`, so the backend `exa_search`
 schema accepts only `query`, sent as both; the other routes forward Exa's own
-request bodies.
+request bodies. Direct `exa_search` sends `type: "lite"`, Exa's low-latency
+tier, unless the caller chose a type. `lite` reads Exa's index without fetching
+pages, so results with no cached copy are left out when text or highlights are
+requested.
 
 Gemini's `gemini_agentic_search` calls `generateContent` with Google Search
 grounding: directly with `x-goog-api-key`, or through
 `/agent-integrations/gemini/models/{model}/generate-content`, whose schema
 limits `model` to the backend's allowlist (default `gemini-3.8-flash`). The
+default model runs with `thinkingLevel: low`, on both routes, to keep grounded
+calls fast; a different `model` keeps that model's own thinking default. The
 answer joins the candidate's text parts, and citations list the grounding
 chunks that `groundingSupports` reference first, then the rest.
 For the Search role, the same grounded call returns deduplicated HTTP(S)
