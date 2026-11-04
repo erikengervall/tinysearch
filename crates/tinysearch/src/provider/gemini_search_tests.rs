@@ -64,7 +64,7 @@ fn search(arguments: Value) -> ExecuteToolRequest {
 async fn gemini_mock(server: &MockServer, value: Value, count: u64) {
     Mock::given(method("POST")).and(path(GEMINI_PATH))
         .and(header("x-goog-api-key", "gemini-key"))
-        .and(body_json(json!({"contents":[{"parts":[{"text":"fixture query"}]}],"tools":[{"google_search":{}}]})))
+        .and(body_json(json!({"contents":[{"parts":[{"text":"fixture query"}]}],"tools":[{"google_search":{}}],"generationConfig":{"thinkingConfig":{"thinkingLevel":"low"}}})))
         .respond_with(ResponseTemplate::new(200).set_body_json(value)).expect(count).mount(server).await;
 }
 
