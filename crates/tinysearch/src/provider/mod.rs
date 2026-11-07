@@ -16,6 +16,10 @@ const DEFAULT_GEMINI_THINKING_LEVEL: &str = "low";
 const MAX_RESULTS: usize = 20;
 const MAX_CITATIONS: usize = 40;
 const MAX_ANSWER_CHARS: usize = 12_000;
+const MAX_SNIPPET_CHARS: usize = 1_200;
+/// The most text kept per page by a contents tool, and the most a configured
+/// [`ProviderConfig::contents_max_chars`] asks a provider for.
+const MAX_PAGE_CHARS: usize = 1_500;
 const MAX_BODY_BYTES: u64 = 2_000_000;
 /// Upper bound on how many Gemini grounding chunks/support entries are ever
 /// examined when selecting citations, independent of `MAX_CITATIONS`. Keeps
@@ -118,7 +122,11 @@ impl BuiltinProvider {
         role: Option<Role>,
     ) -> Result<ExecuteToolResponse> {
         let (path, body) = match self.name {
-            "exa" if config.route == ProviderRoute::Backend => exa_request(request)?,
+            "exa" if config.route == ProviderRoute::Backend => {
+                let mut request = request.clone();
+                direct::apply_contents_cap(config, &mut request);
+                exa_request(&request)?
+            }
             "exa" | "parallel" | "brave" | "querit" | "tavily" | "seltz" | "searxng"
             | "tinyfish" | "keenable" => {
                 return direct::run(&self.client, self.name, config, request).await;

@@ -158,6 +158,10 @@ pub struct ProviderConfig {
     pub timeout_secs: Option<u64>,
     /// Default `SearXNG` language when the search call omits one.
     pub default_language: Option<String>,
+    /// Cap, in characters, on each page an Exa contents call returns. `None`
+    /// asks for whole pages; values above the module's own per-page bound
+    /// (1,500) are lowered to it.
+    pub contents_max_chars: Option<u64>,
 }
 impl Default for ProviderConfig {
     fn default() -> Self {
@@ -169,6 +173,7 @@ impl Default for ProviderConfig {
             max_results: None,
             timeout_secs: None,
             default_language: None,
+            contents_max_chars: None,
         }
     }
 }
@@ -185,6 +190,7 @@ impl fmt::Debug for ProviderConfig {
             .field("max_results", &self.max_results)
             .field("timeout_secs", &self.timeout_secs)
             .field("default_language", &self.default_language)
+            .field("contents_max_chars", &self.contents_max_chars)
             .finish()
     }
 }

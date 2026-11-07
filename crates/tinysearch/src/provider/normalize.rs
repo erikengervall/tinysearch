@@ -1,7 +1,11 @@
 //! Bounded normalization of provider payloads.
-use super::{MAX_ANSWER_CHARS, MAX_CITATIONS, MAX_GROUNDING_CHUNKS, MAX_RESULTS};
-use crate::{Citation, ExecuteToolResponse, SearchResult, SearchStatus};
+use super::{
+    MAX_ANSWER_CHARS, MAX_CITATIONS, MAX_GROUNDING_CHUNKS, MAX_PAGE_CHARS, MAX_RESULTS,
+    MAX_SNIPPET_CHARS,
+};
+use crate::{Citation, ExecuteToolResponse, Role, SearchResult, SearchStatus};
 use serde_json::{Map, Value};
+use tinysearch_bus::role_provider_tool;
 
 fn clipped(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
@@ -12,7 +16,7 @@ fn get_text(value: &Value, field: &str) -> Option<String> {
         .and_then(Value::as_str)
         .map(|s| clipped(s, MAX_ANSWER_CHARS))
 }
-fn add_result(results: &mut Vec<SearchResult>, item: &Value) {
+fn add_result(results: &mut Vec<SearchResult>, item: &Value, snippet_chars: usize) {
     if results.len() >= MAX_RESULTS {
         return;
     }
@@ -45,7 +49,7 @@ fn add_result(results: &mut Vec<SearchResult>, item: &Value) {
     results.push(SearchResult {
         title: clipped(title, 300),
         url: clipped(url, 2048),
-        snippet: snippet.map(|s| clipped(s, 1200)),
+        snippet: snippet.map(|s| clipped(s, snippet_chars)),
         published: item
             .get("published_date")
             .or_else(|| item.get("publish_date"))
@@ -208,9 +212,15 @@ fn add_grounding_citations(citations: &mut Vec<Citation>, value: &Value) {
 pub(super) fn normalize(provider: &str, tool: &str, value: &Value) -> ExecuteToolResponse {
     let mut results = Vec::new();
     let mut citations = Vec::new();
+    // A page-contents tool keeps up to a page's worth of text per result.
+    let snippet_chars = if role_provider_tool(Role::Contents, provider) == Some(tool) {
+        MAX_PAGE_CHARS
+    } else {
+        MAX_SNIPPET_CHARS
+    };
     if let Some(items) = value.get("results").and_then(Value::as_array) {
         for item in items {
-            add_result(&mut results, item);
+            add_result(&mut results, item, snippet_chars);
             if results.len() == MAX_RESULTS {
                 break;
             }
