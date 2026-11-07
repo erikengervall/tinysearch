@@ -10,15 +10,16 @@
 //! URL (`Image: <url>` in text, an inline image in markdown), so image search
 //! output keeps both the image and the page it came from.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use serde_json::Value;
 
 use crate::labels::provider_label;
-use crate::{ExecuteToolResponse, IMAGE_ASSETS, Role, SearchStatus};
+use crate::{Citation, ExecuteToolResponse, IMAGE_ASSETS, Role, SearchStatus};
 
-/// Snippets in rendered output are capped at this many characters.
-pub const TEXT_EXCERPT_CHARS: usize = 500;
+mod options;
+pub use options::{COMPACT_CONTENTS_CHARS, RenderOptions, TEXT_EXCERPT_CHARS};
 
 /// What the call was about: the query, the URLs of a contents call, or the
 /// objective, taken from the tool arguments.
@@ -116,9 +117,50 @@ fn result_images(response: &ExecuteToolResponse) -> Vec<Option<&str>> {
         .collect()
 }
 
+/// The citations to list under `Sources`, with their 1-based numbers.
+///
+/// All of them unless `options.compact_sources` is set; then only those that
+/// are not among the first `max_results` results, at most `max_results`.
+fn sources<'a>(
+    response: &'a ExecuteToolResponse,
+    max_results: usize,
+    options: &RenderOptions,
+) -> Vec<(usize, &'a Citation)> {
+    let numbered = response
+        .citations
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (i + 1, c));
+    if !options.compact_sources {
+        return numbered.collect();
+    }
+    let shown: HashSet<&str> = response
+        .results
+        .iter()
+        .take(max_results)
+        .map(|result| result.url.trim())
+        .collect();
+    numbered
+        .filter(|(_, citation)| !shown.contains(citation.url.trim()))
+        .take(max_results)
+        .collect()
+}
+
 /// Plain-text rendering, showing at most `max_results` results.
 #[must_use]
 pub fn render_text(response: &ExecuteToolResponse, subject: &str, max_results: usize) -> String {
+    render_text_with(response, subject, max_results, &RenderOptions::default())
+}
+
+/// [`render_text`] with explicit [`RenderOptions`].
+#[must_use]
+pub fn render_text_with(
+    response: &ExecuteToolResponse,
+    subject: &str,
+    max_results: usize,
+    options: &RenderOptions,
+) -> String {
+    let excerpt_chars = options.excerpt_for(response.role);
     let mut lines = vec![heading(response, subject)];
     if let Some(answer) = non_empty(response.answer.as_deref()) {
         lines.push(String::new());
@@ -140,16 +182,17 @@ pub fn render_text(response: &ExecuteToolResponse, subject: &str, max_results: u
             lines.push(format!("   Published: {date}"));
         }
         if let Some(snippet) = non_empty(item.snippet.as_deref()) {
-            lines.push(format!("   {}", truncate(snippet, TEXT_EXCERPT_CHARS, "…")));
+            lines.push(format!("   {}", truncate(snippet, excerpt_chars, "…")));
         }
     }
-    if !response.citations.is_empty() {
+    let sources = sources(response, max_results, options);
+    if !sources.is_empty() {
         lines.push(String::new());
         lines.push("Sources:".into());
-        for (index, citation) in response.citations.iter().enumerate() {
+        for (number, citation) in sources {
             match non_empty(citation.title.as_deref()) {
-                Some(title) => lines.push(format!("[{}] {} — {}", index + 1, title, citation.url)),
-                None => lines.push(format!("[{}] {}", index + 1, citation.url)),
+                Some(title) => lines.push(format!("[{number}] {title} — {}", citation.url)),
+                None => lines.push(format!("[{number}] {}", citation.url)),
             }
         }
     }
@@ -163,6 +206,18 @@ pub fn render_markdown(
     subject: &str,
     max_results: usize,
 ) -> String {
+    render_markdown_with(response, subject, max_results, &RenderOptions::default())
+}
+
+/// [`render_markdown`] with explicit [`RenderOptions`].
+#[must_use]
+pub fn render_markdown_with(
+    response: &ExecuteToolResponse,
+    subject: &str,
+    max_results: usize,
+    options: &RenderOptions,
+) -> String {
+    let excerpt_chars = options.excerpt_for(response.role);
     let mut out = format!("# {}\n", heading(response, subject));
     if let Some(answer) = non_empty(response.answer.as_deref()) {
         let _ = write!(out, "\n{answer}\n");
@@ -179,15 +234,16 @@ pub fn render_markdown(
             let _ = write!(out, "_Published: {date}_\n\n");
         }
         if let Some(snippet) = non_empty(item.snippet.as_deref()) {
-            let _ = writeln!(out, "> {}", truncate(snippet, TEXT_EXCERPT_CHARS, "…"));
+            let _ = writeln!(out, "> {}", truncate(snippet, excerpt_chars, "…"));
         }
         if let Some(image) = images[index] {
             let _ = write!(out, "\n![{title}]({image})\n");
         }
     }
-    if !response.citations.is_empty() {
+    let sources = sources(response, max_results, options);
+    if !sources.is_empty() {
         out.push_str("\n### Sources\n");
-        for citation in &response.citations {
+        for (_, citation) in sources {
             let title = non_empty(citation.title.as_deref()).unwrap_or(citation.url.as_str());
             let _ = writeln!(out, "- [{title}]({})", citation.url);
         }
