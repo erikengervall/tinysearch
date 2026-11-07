@@ -56,8 +56,9 @@ fn search_result_publication_is_optional_on_the_wire() -> serde_json::Result<()>
 fn provider_limits_round_trip_without_exposing_credential_in_debug() -> serde_json::Result<()> {
     let config: ProviderConfig = serde_json::from_value(serde_json::json!({
         "credential":"private-key", "max_results":12, "timeout_secs":8,
-        "default_language":"fr"
+        "default_language":"fr", "contents_max_chars":1500
     }))?;
+    assert_eq!(config.contents_max_chars, Some(1500));
     assert_eq!(config.max_results, Some(12));
     assert_eq!(config.timeout_secs, Some(8));
     assert_eq!(config.default_language.as_deref(), Some("fr"));
@@ -71,6 +72,7 @@ fn provider_limits_round_trip_without_exposing_credential_in_debug() -> serde_js
     assert_eq!(legacy.max_results, None);
     assert_eq!(legacy.timeout_secs, None);
     assert_eq!(legacy.default_language, None);
+    assert_eq!(legacy.contents_max_chars, None);
     Ok(())
 }
 

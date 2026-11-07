@@ -70,6 +70,13 @@ under its page (`Image: <url>` in text, an inline image in markdown).
 Tavily's `include_images` is not used: it returns image URLs without the page
 each one came from.
 
+`tinysearch_bus::render::RenderOptions` tunes the renderings: `excerpt_chars`
+and `contents_chars` set the snippet and per-page caps, and `compact_sources`
+leaves out `Sources` entries that repeat a listed result (`RenderOptions::compact()`
+turns on both that and a 1,500-character page cap). `render_text_with` and
+`render_markdown_with` take the options; `render_text` and `render_markdown`
+keep the defaults, the original output.
+
 `all_tools` exposes every available provider tool, `one_provider` exposes one
 provider's tools, and `router` exposes one `search` tool that runs the chosen
 provider's first tool with Search role normalization, defaulting to the search
@@ -91,7 +98,9 @@ classify the failure, the message starts with `tinysearch.<code>: `, and
 A direct provider requires its own credential unless it is explicitly keyless.
 A backend route requires a backend credential. Search can be disabled globally.
 Provider configuration includes a route, optional base URL, credential,
-`max_results`, `timeout_secs`, and a SearXNG `default_language`.
+`max_results`, `timeout_secs`, a SearXNG `default_language`, and
+`contents_max_chars`, which caps each page an Exa contents call returns
+(unset asks for whole pages; at most 1,500 is kept either way).
 Debug output redacts credentials.
 
 ```sh

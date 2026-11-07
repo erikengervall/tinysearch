@@ -70,3 +70,38 @@ fn only_search_takes_a_type() -> Result<()> {
     assert!(body.get("type").is_none());
     Ok(())
 }
+
+fn contents(arguments: Value) -> ExecuteToolRequest {
+    ExecuteToolRequest {
+        name: "exa_get_contents".into(),
+        arguments,
+    }
+}
+
+#[test]
+fn contents_ask_for_whole_pages_unless_capped() -> Result<()> {
+    let (_, body) = exa_body(&contents(json!({"urls":["https://a.example"]})))?;
+    assert_eq!(body["text"], true);
+    Ok(())
+}
+
+#[test]
+fn contents_cap_each_page_at_max_characters() -> Result<()> {
+    let (path, body) = exa_body(&contents(
+        json!({"urls":["https://a.example"],"max_characters":1500}),
+    ))?;
+    assert_eq!(path, "/contents");
+    assert_eq!(body["text"], json!({"maxCharacters":1500}));
+    Ok(())
+}
+
+#[test]
+fn a_zero_or_malformed_cap_is_ignored() -> Result<()> {
+    for cap in [json!(0), json!("many"), json!(-5)] {
+        let (_, body) = exa_body(&contents(
+            json!({"urls":["https://a.example"],"max_characters":cap}),
+        ))?;
+        assert_eq!(body["text"], true);
+    }
+    Ok(())
+}

@@ -37,7 +37,13 @@ pub(super) fn exa_body(request: &ExecuteToolRequest) -> Result<(&'static str, Va
             "/findSimilar",
             json!({"url":required_string(args,"url")?,"numResults":count(args,"max_results")}),
         ),
-        "exa_get_contents" => ("/contents", json!({"urls":urls(args)?,"text":true})),
+        "exa_get_contents" => {
+            let text = match args.get("max_characters").and_then(Value::as_u64) {
+                Some(max) if max > 0 => json!({"maxCharacters":max}),
+                _ => json!(true),
+            };
+            ("/contents", json!({"urls":urls(args)?,"text":text}))
+        }
         "exa_answer" => {
             let mut body = json!({"query":required_string(args,"query")?});
             if args.get("include_text") == Some(&Value::Bool(true)) {
