@@ -1241,6 +1241,21 @@ fn contents_snippets_keep_the_page_cap_but_search_snippets_stay_bounded() {
     );
 }
 
+#[test]
+fn non_exa_contents_snippets_keep_the_search_snippet_bound() {
+    let value = json!({"results":[{"url":"https://a","text":"z".repeat(3000)}]});
+    for (provider, tool) in [("keenable", "keenable_fetch"), ("tavily", "tavily_extract")] {
+        let page = normalize(provider, tool, &value);
+        assert_eq!(
+            page.results[0]
+                .snippet
+                .as_deref()
+                .map(|s| s.chars().count()),
+            Some(1200)
+        );
+    }
+}
+
 #[tokio::test]
 async fn brave_direct_operations_map_and_normalize() -> TestResult<()> {
     for (tool, path, payload) in [
