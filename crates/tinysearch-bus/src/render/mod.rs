@@ -142,17 +142,31 @@ fn url_key(url: &str) -> String {
     )
 }
 
-/// The answer text to print. A page-contents response may carry the first
-/// page as its answer as well as in its result snippet; under non-default
-/// options that copy would bypass the per-page budget, so it is left out when
-/// the page is listed. Answer-role responses are never touched, and the
+/// The answer text to print.
+///
+/// A page-contents response may carry the first page as its answer as well as
+/// in its result snippet. Under non-default options that copy is left out, but
+/// only when it is a confirmed copy of a page that is actually listed (one
+/// text is a prefix of the other); any other contents answer is kept, clipped
+/// to the per-page budget. Answer-role responses are never touched, and the
 /// default options keep the original output.
-fn answer_text<'a>(response: &'a ExecuteToolResponse, options: &RenderOptions) -> Option<&'a str> {
+fn answer_text(
+    response: &ExecuteToolResponse,
+    max_results: usize,
+    options: &RenderOptions,
+) -> Option<String> {
     let answer = non_empty(response.answer.as_deref())?;
-    let duplicates_page = response.role == Some(Role::Contents)
-        && !response.results.is_empty()
-        && *options != RenderOptions::default();
-    (!duplicates_page).then_some(answer)
+    if response.role != Some(Role::Contents) || *options == RenderOptions::default() {
+        return Some(answer.to_string());
+    }
+    let answer_trimmed = answer.trim();
+    let copies_listed_page = response.results.iter().take(max_results).any(|result| {
+        non_empty(result.snippet.as_deref()).is_some_and(|snippet| {
+            let snippet = snippet.trim();
+            answer_trimmed.starts_with(snippet) || snippet.starts_with(answer_trimmed)
+        })
+    });
+    (!copies_listed_page).then(|| truncate(answer, options.contents_chars, "…"))
 }
 
 /// The citations to list under `Sources`, with their 1-based numbers.
@@ -200,9 +214,9 @@ pub fn render_text_with(
 ) -> String {
     let excerpt_chars = options.excerpt_for(response.role);
     let mut lines = vec![heading(response, subject)];
-    if let Some(answer) = answer_text(response, options) {
+    if let Some(answer) = answer_text(response, max_results, options) {
         lines.push(String::new());
-        lines.push(answer.to_string());
+        lines.push(answer);
     }
     let images = result_images(response);
     for (index, item) in response.results.iter().take(max_results).enumerate() {
@@ -257,7 +271,7 @@ pub fn render_markdown_with(
 ) -> String {
     let excerpt_chars = options.excerpt_for(response.role);
     let mut out = format!("# {}\n", heading(response, subject));
-    if let Some(answer) = answer_text(response, options) {
+    if let Some(answer) = answer_text(response, max_results, options) {
         let _ = write!(out, "\n{answer}\n");
     }
     let images = result_images(response);
