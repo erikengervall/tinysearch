@@ -118,7 +118,7 @@ fn result_images(response: &ExecuteToolResponse) -> Vec<Option<&str>> {
 }
 
 /// A URL as compared for repeats: the scheme and host of an HTTP(S) URL are
-/// case-insensitive, the rest is not.
+/// case-insensitive, the rest (including any userinfo) is not.
 fn url_key(url: &str) -> String {
     let url = url.trim();
     let Some(split) = url.find("://") else {
@@ -131,10 +131,14 @@ fn url_key(url: &str) -> String {
     let rest = &rest[3..];
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, tail) = rest.split_at(end);
+    let (userinfo, host) = match authority.rfind('@') {
+        Some(at) => authority.split_at(at + 1),
+        None => ("", authority),
+    };
     format!(
-        "{}://{}{tail}",
+        "{}://{userinfo}{}{tail}",
         scheme.to_ascii_lowercase(),
-        authority.to_ascii_lowercase()
+        host.to_ascii_lowercase()
     )
 }
 

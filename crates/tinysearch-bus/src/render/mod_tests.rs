@@ -307,6 +307,25 @@ fn compact_matches_repeated_sources_by_case_insensitive_host_only() {
 }
 
 #[test]
+fn compact_keeps_a_citation_whose_userinfo_differs_only_in_case() {
+    let mut r = listed(1);
+    r.results[0].url = "https://reader:TokenA@Example.com/Path".into();
+    r.citations = vec![
+        Citation {
+            url: "https://reader:TokenA@example.com/Path".into(),
+            title: None,
+        },
+        Citation {
+            url: "https://reader:Tokena@example.com/Path".into(),
+            title: None,
+        },
+    ];
+    let text = render_text_with(&r, "q", 5, &RenderOptions::compact());
+    assert!(!text.contains("[1]"));
+    assert!(text.contains("[2] https://reader:Tokena@example.com/Path"));
+}
+
+#[test]
 fn contents_answer_copy_of_the_page_is_left_out_under_a_budget_only() {
     let mut page = response(Some(Role::Contents));
     page.provider = "tinyfish".into();
