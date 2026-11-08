@@ -170,6 +170,22 @@ fn image_asset(source_url: &str, image_url: &str, title: Option<&str>) -> Option
     Some(asset)
 }
 
+/// Adds the configured per-page cap to an Exa contents call that set none.
+///
+/// The cap rides in the call's `max_characters` argument, which
+/// [`exa_body`] turns into Exa's `text.maxCharacters`. A cap above what
+/// normalization keeps per page is lowered to that bound.
+pub(super) fn apply_contents_cap(config: &ProviderConfig, request: &mut ExecuteToolRequest) {
+    if request.name == "exa_get_contents"
+        && request.arguments.get("max_characters").is_none()
+        && let Some(cap) = config.contents_max_chars
+        && let Some(args) = request.arguments.as_object_mut()
+    {
+        let bound = u64::try_from(super::MAX_PAGE_CHARS).unwrap_or(u64::MAX);
+        args.insert("max_characters".into(), Value::from(cap.clamp(1, bound)));
+    }
+}
+
 pub(super) fn prepare(
     provider: &str,
     config: &ProviderConfig,
@@ -177,6 +193,7 @@ pub(super) fn prepare(
     key: &str,
 ) -> Result<Prepared> {
     let mut request = request.clone();
+    apply_contents_cap(config, &mut request);
     let count_field = if provider == "brave" {
         "count"
     } else {
