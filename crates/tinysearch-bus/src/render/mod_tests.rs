@@ -288,6 +288,108 @@ fn contents_pages_are_bounded_by_the_contents_cap() {
 }
 
 #[test]
+fn compact_matches_repeated_sources_by_case_insensitive_host_only() {
+    let mut r = listed(1);
+    r.results[0].url = "https://Example.COM/Path".into();
+    r.citations = vec![
+        Citation {
+            url: "HTTPS://example.com/Path".into(),
+            title: None,
+        },
+        Citation {
+            url: "https://example.com/path".into(),
+            title: None,
+        },
+    ];
+    let text = render_text_with(&r, "q", 5, &RenderOptions::compact());
+    assert!(!text.contains("[1]"));
+    assert!(text.contains("[2] https://example.com/path"));
+}
+
+#[test]
+fn compact_keeps_a_citation_whose_userinfo_differs_only_in_case() {
+    let mut r = listed(1);
+    r.results[0].url = "https://reader:TokenA@Example.com/Path".into();
+    r.citations = vec![
+        Citation {
+            url: "https://reader:TokenA@example.com/Path".into(),
+            title: None,
+        },
+        Citation {
+            url: "https://reader:Tokena@example.com/Path".into(),
+            title: None,
+        },
+    ];
+    let text = render_text_with(&r, "q", 5, &RenderOptions::compact());
+    assert!(!text.contains("[1]"));
+    assert!(text.contains("[2] https://reader:Tokena@example.com/Path"));
+}
+
+#[test]
+fn contents_answer_is_kept_when_no_snippet_duplicates_it() {
+    let mut page = response(Some(Role::Contents));
+    page.results[0].snippet = None;
+    page.answer = Some("z".repeat(4000));
+    let narrow = RenderOptions {
+        contents_chars: 200,
+        ..RenderOptions::default()
+    };
+    for options in [RenderOptions::compact(), narrow] {
+        for out in [
+            render_text_with(&page, "u", 5, &options),
+            render_markdown_with(&page, "u", 5, &options),
+        ] {
+            assert!(out.contains(&"z".repeat(options.contents_chars.min(200))));
+            assert!(!out.contains(&"z".repeat(options.contents_chars + 1)));
+        }
+    }
+}
+
+#[test]
+fn contents_answer_is_kept_when_no_page_is_listed() {
+    let mut page = response(Some(Role::Contents));
+    page.results[0].snippet = Some("y".repeat(300));
+    page.answer = Some("y".repeat(300));
+    let narrow = RenderOptions {
+        contents_chars: 100,
+        ..RenderOptions::default()
+    };
+    for out in [
+        render_text_with(&page, "u", 0, &narrow),
+        render_markdown_with(&page, "u", 0, &narrow),
+    ] {
+        assert_eq!(out.matches("y".repeat(100).as_str()).count(), 1);
+        assert!(!out.contains(&"y".repeat(101)));
+    }
+}
+
+#[test]
+fn contents_answer_copy_of_the_page_is_left_out_under_a_budget_only() {
+    let mut page = response(Some(Role::Contents));
+    page.provider = "tinyfish".into();
+    page.results[0].snippet = Some("y".repeat(4000));
+    page.answer = Some("y".repeat(4000));
+    let narrow = RenderOptions {
+        contents_chars: 200,
+        ..RenderOptions::default()
+    };
+    for out in [
+        render_text_with(&page, "u", 5, &narrow),
+        render_markdown_with(&page, "u", 5, &narrow),
+    ] {
+        assert!(!out.contains(&"y".repeat(201)));
+        assert_eq!(out.matches("y".repeat(200).as_str()).count(), 1);
+    }
+    // Default output is unchanged.
+    assert!(render_text(&page, "u", 5).contains(&"y".repeat(4000)));
+    // Answer-role responses are never trimmed.
+    let mut answer = answer_fixture();
+    answer.answer = Some("a".repeat(4000));
+    let out = render_text_with(&answer, "q", 5, &RenderOptions::compact());
+    assert!(out.contains(&"a".repeat(4000)));
+}
+
+#[test]
 fn the_default_contents_cap_matches_todays_output() {
     let mut page = response(Some(Role::Contents));
     page.results[0].snippet = Some("y".repeat(900));
