@@ -212,12 +212,15 @@ fn add_grounding_citations(citations: &mut Vec<Citation>, value: &Value) {
 pub(super) fn normalize(provider: &str, tool: &str, value: &Value) -> ExecuteToolResponse {
     let mut results = Vec::new();
     let mut citations = Vec::new();
-    // A page-contents tool keeps up to a page's worth of text per result.
-    let snippet_chars = if role_provider_tool(Role::Contents, provider) == Some(tool) {
-        MAX_PAGE_CHARS
-    } else {
-        MAX_SNIPPET_CHARS
-    };
+    // Only Exa honours a per-page bound upstream (`contents_max_chars`), so
+    // only its contents tool keeps a page's worth of text per result; every
+    // other tool keeps today's snippet bound.
+    let snippet_chars =
+        if provider == "exa" && role_provider_tool(Role::Contents, provider) == Some(tool) {
+            MAX_PAGE_CHARS
+        } else {
+            MAX_SNIPPET_CHARS
+        };
     if let Some(items) = value.get("results").and_then(Value::as_array) {
         for item in items {
             add_result(&mut results, item, snippet_chars);

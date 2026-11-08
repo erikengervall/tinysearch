@@ -117,6 +117,40 @@ fn result_images(response: &ExecuteToolResponse) -> Vec<Option<&str>> {
         .collect()
 }
 
+/// A URL as compared for repeats: the scheme and host of an HTTP(S) URL are
+/// case-insensitive, the rest is not.
+fn url_key(url: &str) -> String {
+    let url = url.trim();
+    let Some(split) = url.find("://") else {
+        return url.to_string();
+    };
+    let (scheme, rest) = url.split_at(split);
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return url.to_string();
+    }
+    let rest = &rest[3..];
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let (authority, tail) = rest.split_at(end);
+    format!(
+        "{}://{}{tail}",
+        scheme.to_ascii_lowercase(),
+        authority.to_ascii_lowercase()
+    )
+}
+
+/// The answer text to print. A page-contents response may carry the first
+/// page as its answer as well as in its result snippet; under non-default
+/// options that copy would bypass the per-page budget, so it is left out when
+/// the page is listed. Answer-role responses are never touched, and the
+/// default options keep the original output.
+fn answer_text<'a>(response: &'a ExecuteToolResponse, options: &RenderOptions) -> Option<&'a str> {
+    let answer = non_empty(response.answer.as_deref())?;
+    let duplicates_page = response.role == Some(Role::Contents)
+        && !response.results.is_empty()
+        && *options != RenderOptions::default();
+    (!duplicates_page).then_some(answer)
+}
+
 /// The citations to list under `Sources`, with their 1-based numbers.
 ///
 /// All of them unless `options.compact_sources` is set; then only those that
@@ -134,14 +168,14 @@ fn sources<'a>(
     if !options.compact_sources {
         return numbered.collect();
     }
-    let shown: HashSet<&str> = response
+    let shown: HashSet<String> = response
         .results
         .iter()
         .take(max_results)
-        .map(|result| result.url.trim())
+        .map(|result| url_key(&result.url))
         .collect();
     numbered
-        .filter(|(_, citation)| !shown.contains(citation.url.trim()))
+        .filter(|(_, citation)| !shown.contains(&url_key(&citation.url)))
         .take(max_results)
         .collect()
 }
@@ -162,7 +196,7 @@ pub fn render_text_with(
 ) -> String {
     let excerpt_chars = options.excerpt_for(response.role);
     let mut lines = vec![heading(response, subject)];
-    if let Some(answer) = non_empty(response.answer.as_deref()) {
+    if let Some(answer) = answer_text(response, options) {
         lines.push(String::new());
         lines.push(answer.to_string());
     }
@@ -219,7 +253,7 @@ pub fn render_markdown_with(
 ) -> String {
     let excerpt_chars = options.excerpt_for(response.role);
     let mut out = format!("# {}\n", heading(response, subject));
-    if let Some(answer) = non_empty(response.answer.as_deref()) {
+    if let Some(answer) = answer_text(response, options) {
         let _ = write!(out, "\n{answer}\n");
     }
     let images = result_images(response);
