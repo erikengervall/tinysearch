@@ -39,6 +39,7 @@ fn catalog_and_selection_are_stable() {
             "querit",
             "searxng",
             "seltz",
+            "serply",
             "tavily",
             "tinyfish"
         ]
@@ -51,7 +52,7 @@ fn catalog_and_selection_are_stable() {
         mode: PresentationMode::AllTools,
         ..PresentationConfig::default()
     };
-    assert_eq!(select_tools(&specs, &all).tools.len(), 29);
+    assert_eq!(select_tools(&specs, &all).tools.len(), 30);
 }
 
 #[test]
@@ -165,7 +166,7 @@ fn provider_roles_and_defaults_match_the_contract() {
         Some("keenable_fetch")
     );
     assert_eq!(role_provider_tool(Role::Answer, "keenable"), None);
-    for provider in ["querit", "seltz"] {
+    for provider in ["querit", "seltz", "serply"] {
         assert_eq!(provider_roles(provider), [Role::Search]);
     }
     for provider in ["brave", "searxng"] {
@@ -187,7 +188,7 @@ fn provider_roles_and_defaults_match_the_contract() {
         default_role_providers(Role::Search),
         [
             "exa", "brave", "tavily", "parallel", "querit", "seltz", "searxng", "tinyfish",
-            "keenable", "gemini"
+            "keenable", "serply", "gemini"
         ]
     );
     assert_eq!(
@@ -211,7 +212,8 @@ fn provider_roles_and_defaults_match_the_contract() {
             "tavily",
             "seltz",
             "searxng",
-            "keenable"
+            "keenable",
+            "serply"
         ]
     );
     // The TinyHumans backend does not proxy TinyFish: it is own-key only.
@@ -232,7 +234,7 @@ fn direct_tools_require_a_nonempty_private_credential() {
     let specs = provider_tool_specs();
     let mut config = SearchConfig::default();
     for name in [
-        "exa", "parallel", "brave", "querit", "tavily", "seltz", "tinyfish",
+        "exa", "parallel", "brave", "querit", "tavily", "seltz", "tinyfish", "serply",
     ] {
         config.providers.insert(name.into(), keyed("  "));
     }
@@ -248,6 +250,7 @@ fn direct_tools_require_a_nonempty_private_credential() {
     assert_eq!(available["tavily"].len(), 2);
     assert_eq!(available["seltz"].len(), 1);
     assert_eq!(available["tinyfish"].len(), 3);
+    assert_eq!(available["serply"].len(), 1);
 }
 
 #[test]
