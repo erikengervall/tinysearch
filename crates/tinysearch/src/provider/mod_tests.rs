@@ -1156,6 +1156,107 @@ async fn exa_direct_operations_map_and_normalize() -> TestResult<()> {
 }
 
 #[tokio::test]
+async fn configured_contents_cap_bounds_pages_end_to_end() -> TestResult<()> {
+    let page = "p".repeat(4000);
+    let (url, server) = mock(
+        200,
+        json!({"results":[{"url":"https://page.test","title":"Page","text":page}]}),
+    )
+    .await?;
+    let response = direct::run(
+        &Client::new(),
+        "exa",
+        &ProviderConfig {
+            base_url: Some(url),
+            credential: Some("exa-secret".into()),
+            contents_max_chars: Some(1500),
+            ..ProviderConfig::default()
+        },
+        &request("exa_get_contents", json!({"urls":["https://page.test"]})),
+    )
+    .await?;
+    let sent = server.await??;
+    assert!(sent.contains("\"text\":{\"maxCharacters\":1500}"));
+    let snippet = response.results[0].snippet.as_deref().ok_or("no snippet")?;
+    assert_eq!(snippet.chars().count(), 1500);
+    Ok(())
+}
+
+#[test]
+fn contents_cap_is_kept_within_what_normalization_keeps() {
+    let mut contents = request("exa_get_contents", json!({"urls":["https://a"]}));
+    let config = ProviderConfig {
+        contents_max_chars: Some(50_000),
+        ..ProviderConfig::default()
+    };
+    direct::apply_contents_cap(&config, &mut contents);
+    assert_eq!(contents.arguments["max_characters"], 1500);
+}
+
+#[test]
+fn contents_cap_applies_to_the_backend_route_and_only_to_contents() -> TestResult<()> {
+    let config = ProviderConfig {
+        contents_max_chars: Some(800),
+        ..ProviderConfig::default()
+    };
+    let mut contents = request("exa_get_contents", json!({"urls":["https://a"]}));
+    direct::apply_contents_cap(&config, &mut contents);
+    assert_eq!(
+        exa_request(&contents)?.1,
+        json!({"urls":["https://a"],"text":{"maxCharacters":800}})
+    );
+    let mut search = request("exa_search", json!({"query":"q"}));
+    direct::apply_contents_cap(&config, &mut search);
+    assert!(search.arguments.get("max_characters").is_none());
+    let mut chosen = request(
+        "exa_get_contents",
+        json!({"urls":["https://a"],"max_characters":300}),
+    );
+    direct::apply_contents_cap(&config, &mut chosen);
+    assert_eq!(chosen.arguments["max_characters"], 300);
+    let mut unset = request("exa_get_contents", json!({"urls":["https://a"]}));
+    direct::apply_contents_cap(&ProviderConfig::default(), &mut unset);
+    assert!(unset.arguments.get("max_characters").is_none());
+    Ok(())
+}
+
+#[test]
+fn contents_snippets_keep_the_page_cap_but_search_snippets_stay_bounded() {
+    let value = json!({"results":[{"url":"https://a","text":"z".repeat(3000)}]});
+    let page = normalize("exa", "exa_get_contents", &value);
+    assert_eq!(
+        page.results[0]
+            .snippet
+            .as_deref()
+            .map(|s| s.chars().count()),
+        Some(1500)
+    );
+    let search = normalize("exa", "exa_search", &value);
+    assert_eq!(
+        search.results[0]
+            .snippet
+            .as_deref()
+            .map(|s| s.chars().count()),
+        Some(1200)
+    );
+}
+
+#[test]
+fn non_exa_contents_snippets_keep_the_search_snippet_bound() {
+    let value = json!({"results":[{"url":"https://a","text":"z".repeat(3000)}]});
+    for (provider, tool) in [("keenable", "keenable_fetch"), ("tavily", "tavily_extract")] {
+        let page = normalize(provider, tool, &value);
+        assert_eq!(
+            page.results[0]
+                .snippet
+                .as_deref()
+                .map(|s| s.chars().count()),
+            Some(1200)
+        );
+    }
+}
+
+#[tokio::test]
 async fn brave_direct_operations_map_and_normalize() -> TestResult<()> {
     for (tool, path, payload) in [
         (
