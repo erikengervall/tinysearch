@@ -40,6 +40,7 @@ fn catalog_and_selection_are_stable() {
             "querit",
             "searxng",
             "seltz",
+            "serply",
             "tavily",
             "tinyfish"
         ]
@@ -53,7 +54,7 @@ fn catalog_and_selection_are_stable() {
         mode: PresentationMode::AllTools,
         ..PresentationConfig::default()
     };
-    assert_eq!(select_tools(&specs, &all).tools.len(), 31);
+    assert_eq!(select_tools(&specs, &all).tools.len(), 32);
 }
 
 #[test]
@@ -181,7 +182,7 @@ fn provider_roles_and_defaults_match_the_contract() {
     assert_eq!(provider_roles("gemini_deep_research"), [Role::Answer]);
     assert_eq!(provider_roles("tinyfish"), [Role::Search, Role::Contents]);
     assert_eq!(provider_roles("tavily"), [Role::Search, Role::Contents]);
-    for provider in ["querit", "seltz"] {
+    for provider in ["querit", "seltz", "serply"] {
         assert_eq!(provider_roles(provider), [Role::Search]);
     }
     for provider in ["brave", "searxng"] {
@@ -211,6 +212,7 @@ fn provider_roles_and_defaults_match_the_contract() {
             "searxng",
             "tinyfish",
             "keenable",
+            "serply",
             "firecrawl",
             "gemini"
         ]
@@ -244,6 +246,7 @@ fn provider_roles_and_defaults_match_the_contract() {
             "seltz",
             "searxng",
             "keenable",
+            "serply",
             "firecrawl"
         ]
     );
@@ -272,6 +275,7 @@ fn direct_tools_require_a_nonempty_private_credential() {
         "tavily",
         "seltz",
         "tinyfish",
+        "serply",
         "firecrawl",
     ] {
         config.providers.insert(name.into(), keyed("  "));
@@ -288,6 +292,7 @@ fn direct_tools_require_a_nonempty_private_credential() {
     assert_eq!(available["tavily"].len(), 2);
     assert_eq!(available["seltz"].len(), 1);
     assert_eq!(available["tinyfish"].len(), 3);
+    assert_eq!(available["serply"].len(), 1);
     assert_eq!(available["firecrawl"].len(), 2);
 }
 

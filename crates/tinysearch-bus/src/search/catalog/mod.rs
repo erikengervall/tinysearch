@@ -24,6 +24,7 @@ pub const PROVIDERS: &[&str] = &[
     "seltz",
     "searxng",
     "keenable",
+    "serply",
     "firecrawl",
 ];
 
@@ -44,6 +45,7 @@ const KEYED_DIRECT_PROVIDERS: &[&str] = &[
     "seltz",
     "parallel",
     "tinyfish",
+    "serply",
     "firecrawl",
 ];
 
@@ -182,6 +184,12 @@ fn direct_provider_specs() -> BTreeMap<String, Vec<ToolSpec>> {
         json!({"query":text,"max_results":{"type":"integer","minimum":1,"maximum":20},"include_domains":urls(20),"exclude_domains":urls(20),"from_date":text,"to_date":text,"scope":{"type":"string","enum":["news"]}}),
         &["query"],
     )];
+    let serply = vec![tool(
+        "serply_search",
+        "Search Google with Serply",
+        json!({"query":text,"max_results":{"type":"integer","minimum":1,"maximum":20},"country":{"type":"string","minLength":2,"maxLength":2}}),
+        &["query"],
+    )];
     let keenable = vec![
         tool(
             "keenable_search",
@@ -196,7 +204,25 @@ fn direct_provider_specs() -> BTreeMap<String, Vec<ToolSpec>> {
             &["urls"],
         ),
     ];
-    let firecrawl = vec![
+    [
+        ("exa".into(), exa),
+        ("parallel".into(), parallel_specs()),
+        ("brave".into(), brave),
+        ("querit".into(), querit),
+        ("tavily".into(), tavily),
+        ("seltz".into(), seltz),
+        ("keenable".into(), keenable),
+        ("serply".into(), serply),
+        ("firecrawl".into(), firecrawl_specs()),
+    ]
+    .into()
+}
+
+/// Firecrawl's direct API operations: search, and scrape to markdown.
+fn firecrawl_specs() -> Vec<ToolSpec> {
+    let text = json!({"type":"string","minLength":1});
+    let urls = |max| json!({"type":"array","items":{"type":"string","minLength":1},"minItems":1,"maxItems":max});
+    vec![
         tool(
             "firecrawl_search",
             "Search the web with Firecrawl",
@@ -209,18 +235,7 @@ fn direct_provider_specs() -> BTreeMap<String, Vec<ToolSpec>> {
             json!({"urls":urls(10)}),
             &["urls"],
         ),
-    ];
-    [
-        ("exa".into(), exa),
-        ("parallel".into(), parallel_specs()),
-        ("brave".into(), brave),
-        ("querit".into(), querit),
-        ("tavily".into(), tavily),
-        ("seltz".into(), seltz),
-        ("keenable".into(), keenable),
-        ("firecrawl".into(), firecrawl),
     ]
-    .into()
 }
 
 /// Parallel's direct API operations. Parallel has no managed backend route, so
