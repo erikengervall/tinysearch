@@ -16,7 +16,8 @@ pub fn provider_roles(provider: &str) -> &'static [Role] {
         "gemini" => &[Role::Search, Role::Answer],
         "gemini_deep_research" => &[Role::Answer],
         "tinyfish" | "tavily" | "keenable" => &[Role::Search, Role::Contents],
-        "brave" | "querit" | "seltz" | "searxng" | "serply" => &[Role::Search],
+        "brave" | "searxng" => &[Role::Search, Role::Images],
+        "querit" | "seltz" | "serply" => &[Role::Search],
         _ => &[],
     }
 }
@@ -31,6 +32,7 @@ pub fn default_role_providers(role: Role) -> &'static [&'static str] {
         ],
         Role::Answer => &["gemini", "gemini_deep_research", "exa", "parallel"],
         Role::Contents => &["exa", "tavily", "parallel", "tinyfish", "keenable"],
+        Role::Images => &["brave", "searxng"],
     }
 }
 
@@ -44,7 +46,7 @@ pub fn role_provider_tool(role: Role, provider: &str) -> Option<&'static str> {
         (Role::Search, "tavily") => "tavily_search",
         (Role::Search, "querit") => "querit_search",
         (Role::Search, "seltz") => "seltz_search",
-        (Role::Search, "searxng") => "searxng_search",
+        (Role::Search | Role::Images, "searxng") => "searxng_search",
         (Role::Search, "tinyfish") => "tinyfish_search",
         (Role::Search, "parallel") => "parallel_search",
         (Role::Search, "keenable") => "keenable_search",
@@ -57,6 +59,7 @@ pub fn role_provider_tool(role: Role, provider: &str) -> Option<&'static str> {
         (Role::Contents, "tinyfish") => "tinyfish_fetch",
         (Role::Contents, "parallel") => "parallel_extract",
         (Role::Contents, "keenable") => "keenable_fetch",
+        (Role::Images, "brave") => "brave_image_search",
         _ => return None,
     })
 }
@@ -120,9 +123,11 @@ pub fn role_tool_specs(
     let (description, properties, required): (String, Value, &[&str]) = match role {
         Role::Search => (
             format!(
-                "Search the web and get ranked result links with short snippets. Use it to find \
-                 sources, current information, or pages to read next. Backed by: {backed_by} \
-                 (tried in that order; later providers are fallbacks)."
+                "Search the web and get ranked results, each with a query-relevant snippet of \
+                 the page's content. Use it to find sources and current information, and answer \
+                 directly from the snippets when they suffice; fetch a page's full contents only \
+                 when the snippets are not enough. Backed by: {backed_by} (tried in that order; \
+                 later providers are fallbacks)."
             ),
             // `limit` is accepted as an alias: models carry it over from
             // the other list-style tools beside this one, and rejecting it
@@ -187,6 +192,7 @@ pub fn role_tool_specs(
             }),
             &["urls"],
         ),
+        Role::Images => images_declaration(&text, &provider, &backed_by),
     };
     Some(tool(
         role_tool_name(role),
@@ -194,4 +200,41 @@ pub fn role_tool_specs(
         properties,
         required,
     ))
+}
+
+/// The Images role's description, properties and required fields.
+fn images_declaration(
+    text: &Value,
+    provider: &Value,
+    backed_by: &str,
+) -> (String, Value, &'static [&'static str]) {
+    (
+        format!(
+            "Search the web for images. Each result is the page an image appears on; the \
+             image's own direct URL is listed with it. Use it to find pictures, photos, \
+             diagrams, or logos. Backed by: {backed_by} (tried in that order; later providers \
+             are fallbacks)."
+        ),
+        // `count` is accepted as an alias: it is the image providers' own
+        // name for the result count. `country` narrows results where the
+        // provider supports it and is ignored elsewhere.
+        json!({
+            "query":text,
+            "max_results":{"type":"integer","minimum":1,"maximum":20},
+            "count":{
+                "type":"integer",
+                "minimum":1,
+                "maximum":20,
+                "description":"Same as max_results."
+            },
+            "country":{
+                "type":"string",
+                "minLength":2,
+                "maxLength":2,
+                "description":"Two-letter country code to localize results, where supported."
+            },
+            "provider":provider
+        }),
+        &["query"],
+    )
 }

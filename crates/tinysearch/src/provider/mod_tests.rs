@@ -102,6 +102,28 @@ fn normalization_fills_limit_with_valid_results_after_invalid_entries() {
 }
 
 #[test]
+fn exa_search_highlights_become_the_result_snippet() {
+    // Exa `/search` with inline highlights returns a `highlights` array per
+    // result; the first highlight is surfaced as the snippet, so a search that
+    // asked for highlights carries enough content to answer without a separate
+    // contents fetch.
+    let response = normalize(
+        "exa",
+        "exa_search",
+        &json!({"results":[{
+            "url":"https://example.test/a",
+            "title":"A",
+            "highlights":["the key sentence that answers the query","second"]
+        }]}),
+    );
+    assert_eq!(response.results.len(), 1);
+    assert_eq!(
+        response.results[0].snippet.as_deref(),
+        Some("the key sentence that answers the query")
+    );
+}
+
+#[test]
 fn provider_urls_reject_credentials_queries_and_non_http_schemes() -> TestResult<()> {
     for base in [
         "not a url",
@@ -671,7 +693,11 @@ async fn gemini_grounding_normalizes_supported_chunks_first() -> TestResult<()> 
     let sent = server.await??;
     assert_eq!(
         sent_body(&sent)?,
-        json!({"contents":[{"parts":[{"text":"is rust fast"}]}],"tools":[{"googleSearch":{}}]})
+        json!({
+            "contents":[{"parts":[{"text":"is rust fast"}]}],
+            "tools":[{"googleSearch":{}}],
+            "generationConfig":{"thinkingConfig":{"thinkingLevel":"low"}}
+        })
     );
     assert_eq!(response.answer.as_deref(), Some("Rust is fast."));
     assert_eq!(
@@ -755,6 +781,39 @@ async fn direct_gemini_keeps_backend_headers_off_request() -> TestResult<()> {
     assert!(!sent.to_ascii_lowercase().contains("x-api-key:"));
     assert!(sent.contains("\"google_search\":{}"));
     assert_eq!(response.answer.as_deref(), Some("answer"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn gemini_keeps_a_chosen_models_own_thinking_default() -> TestResult<()> {
+    // `low` would raise a model whose default is `minimal`, and older models
+    // refuse `thinkingLevel` outright, so only the default model carries it.
+    let (url, server) = mock(200, json!({"candidates":[]})).await?;
+    let provider = BuiltinProvider {
+        name: "gemini",
+        client: Client::new(),
+    };
+    let config = ProviderConfig {
+        route: ProviderRoute::Direct,
+        credential: Some("google-key".into()),
+        base_url: Some(url),
+        ..ProviderConfig::default()
+    };
+    provider
+        .run(
+            &config,
+            &backend("http://unused".into(), BackendAuthMode::ApiKey),
+            &request(
+                "gemini_agentic_search",
+                json!({"query":"question","model":"gemini-3.5-flash-lite"}),
+            ),
+        )
+        .await?;
+    let sent = server.await??;
+    assert_eq!(
+        sent_body(&sent)?,
+        json!({"contents":[{"parts":[{"text":"question"}]}],"tools":[{"google_search":{}}]})
+    );
     Ok(())
 }
 
@@ -1097,6 +1156,107 @@ async fn exa_direct_operations_map_and_normalize() -> TestResult<()> {
 }
 
 #[tokio::test]
+async fn configured_contents_cap_bounds_pages_end_to_end() -> TestResult<()> {
+    let page = "p".repeat(4000);
+    let (url, server) = mock(
+        200,
+        json!({"results":[{"url":"https://page.test","title":"Page","text":page}]}),
+    )
+    .await?;
+    let response = direct::run(
+        &Client::new(),
+        "exa",
+        &ProviderConfig {
+            base_url: Some(url),
+            credential: Some("exa-secret".into()),
+            contents_max_chars: Some(1500),
+            ..ProviderConfig::default()
+        },
+        &request("exa_get_contents", json!({"urls":["https://page.test"]})),
+    )
+    .await?;
+    let sent = server.await??;
+    assert!(sent.contains("\"text\":{\"maxCharacters\":1500}"));
+    let snippet = response.results[0].snippet.as_deref().ok_or("no snippet")?;
+    assert_eq!(snippet.chars().count(), 1500);
+    Ok(())
+}
+
+#[test]
+fn contents_cap_is_kept_within_what_normalization_keeps() {
+    let mut contents = request("exa_get_contents", json!({"urls":["https://a"]}));
+    let config = ProviderConfig {
+        contents_max_chars: Some(50_000),
+        ..ProviderConfig::default()
+    };
+    direct::apply_contents_cap(&config, &mut contents);
+    assert_eq!(contents.arguments["max_characters"], 1500);
+}
+
+#[test]
+fn contents_cap_applies_to_the_backend_route_and_only_to_contents() -> TestResult<()> {
+    let config = ProviderConfig {
+        contents_max_chars: Some(800),
+        ..ProviderConfig::default()
+    };
+    let mut contents = request("exa_get_contents", json!({"urls":["https://a"]}));
+    direct::apply_contents_cap(&config, &mut contents);
+    assert_eq!(
+        exa_request(&contents)?.1,
+        json!({"urls":["https://a"],"text":{"maxCharacters":800}})
+    );
+    let mut search = request("exa_search", json!({"query":"q"}));
+    direct::apply_contents_cap(&config, &mut search);
+    assert!(search.arguments.get("max_characters").is_none());
+    let mut chosen = request(
+        "exa_get_contents",
+        json!({"urls":["https://a"],"max_characters":300}),
+    );
+    direct::apply_contents_cap(&config, &mut chosen);
+    assert_eq!(chosen.arguments["max_characters"], 300);
+    let mut unset = request("exa_get_contents", json!({"urls":["https://a"]}));
+    direct::apply_contents_cap(&ProviderConfig::default(), &mut unset);
+    assert!(unset.arguments.get("max_characters").is_none());
+    Ok(())
+}
+
+#[test]
+fn contents_snippets_keep_the_page_cap_but_search_snippets_stay_bounded() {
+    let value = json!({"results":[{"url":"https://a","text":"z".repeat(3000)}]});
+    let page = normalize("exa", "exa_get_contents", &value);
+    assert_eq!(
+        page.results[0]
+            .snippet
+            .as_deref()
+            .map(|s| s.chars().count()),
+        Some(1500)
+    );
+    let search = normalize("exa", "exa_search", &value);
+    assert_eq!(
+        search.results[0]
+            .snippet
+            .as_deref()
+            .map(|s| s.chars().count()),
+        Some(1200)
+    );
+}
+
+#[test]
+fn non_exa_contents_snippets_keep_the_search_snippet_bound() {
+    let value = json!({"results":[{"url":"https://a","text":"z".repeat(3000)}]});
+    for (provider, tool) in [("keenable", "keenable_fetch"), ("tavily", "tavily_extract")] {
+        let page = normalize(provider, tool, &value);
+        assert_eq!(
+            page.results[0]
+                .snippet
+                .as_deref()
+                .map(|s| s.chars().count()),
+            Some(1200)
+        );
+    }
+}
+
+#[tokio::test]
 async fn brave_direct_operations_map_and_normalize() -> TestResult<()> {
     for (tool, path, payload) in [
         (
@@ -1145,8 +1305,8 @@ async fn brave_direct_operations_map_and_normalize() -> TestResult<()> {
             assert_eq!(response.results[0].url, "https://source.test/page");
             assert_eq!(response.citations[0].url, "https://source.test/page");
             assert_eq!(
-                response.provider_data.ok_or("missing provider data")?["image_assets"][0]["image_url"],
-                "https://image.test"
+                response.provider_data.ok_or("missing provider data")?["image_assets"],
+                json!([{"source_url":"https://source.test/page","image_url":"https://image.test","title":"Image"}])
             );
         }
     }
