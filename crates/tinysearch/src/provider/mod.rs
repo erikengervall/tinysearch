@@ -7,9 +7,19 @@ use reqwest::{Client, Method};
 use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
+/// The grounded-search model used unless the caller names one.
+const DEFAULT_GEMINI_MODEL: &str = "gemini-3.8-flash";
+/// The default model's thinking level. Search is interactive, so it runs below
+/// the model's own `medium`. Other models keep their defaults: `low` would
+/// raise one that defaults to `minimal`, and older models refuse the field.
+const DEFAULT_GEMINI_THINKING_LEVEL: &str = "low";
 const MAX_RESULTS: usize = 20;
 const MAX_CITATIONS: usize = 40;
 const MAX_ANSWER_CHARS: usize = 12_000;
+const MAX_SNIPPET_CHARS: usize = 1_200;
+/// The most text kept per page by a contents tool, and the most a configured
+/// [`ProviderConfig::contents_max_chars`] asks a provider for.
+const MAX_PAGE_CHARS: usize = 1_500;
 const MAX_BODY_BYTES: u64 = 2_000_000;
 /// Upper bound on how many Gemini grounding chunks/support entries are ever
 /// examined when selecting citations, independent of `MAX_CITATIONS`. Keeps
@@ -112,7 +122,11 @@ impl BuiltinProvider {
         role: Option<Role>,
     ) -> Result<ExecuteToolResponse> {
         let (path, body) = match self.name {
-            "exa" if config.route == ProviderRoute::Backend => exa_request(request)?,
+            "exa" if config.route == ProviderRoute::Backend => {
+                let mut request = request.clone();
+                direct::apply_contents_cap(config, &mut request);
+                exa_request(&request)?
+            }
             "exa" | "parallel" | "brave" | "querit" | "tavily" | "seltz" | "searxng"
             | "tinyfish" | "keenable" | "firecrawl" => {
                 return direct::run(&self.client, self.name, config, request).await;
@@ -164,7 +178,7 @@ impl BuiltinProvider {
             .arguments
             .get("model")
             .and_then(Value::as_str)
-            .unwrap_or("gemini-3.8-flash");
+            .unwrap_or(DEFAULT_GEMINI_MODEL);
         if !model
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_')
@@ -176,7 +190,11 @@ impl BuiltinProvider {
         } else {
             json!([{"google_search":{}}])
         };
-        let body = json!({"contents":[{"parts":[{"text":query}]}],"tools":tools});
+        let mut body = json!({"contents":[{"parts":[{"text":query}]}],"tools":tools});
+        if model == DEFAULT_GEMINI_MODEL {
+            body["generationConfig"] =
+                json!({"thinkingConfig":{"thinkingLevel":DEFAULT_GEMINI_THINKING_LEVEL}});
+        }
         let (url, auth) = match config.route {
             ProviderRoute::Backend => (
                 backend_url(

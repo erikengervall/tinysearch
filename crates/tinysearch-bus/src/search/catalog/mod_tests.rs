@@ -83,12 +83,17 @@ fn parallel_is_direct_only() {
     let extract = &available["parallel"][1];
     assert_eq!(extract.name, "parallel_extract");
     assert!(extract.parameters["properties"].get("excerpts").is_none());
-    for role in Role::ALL {
+    for role in [Role::Search, Role::Answer, Role::Contents] {
         assert_eq!(
             role_providers(&available, &config.presentation, role),
             ["parallel"]
         );
     }
+    assert_eq!(
+        role_providers(&available, &config.presentation, Role::Images).len(),
+        0,
+        "Parallel has no image search"
+    );
 }
 
 #[test]
@@ -124,6 +129,30 @@ fn every_provider_has_specs_roles_and_role_tools() {
 }
 
 #[test]
+fn keyed_search_and_contents_providers_map_their_tools() {
+    assert_eq!(provider_roles("keenable"), [Role::Search, Role::Contents]);
+    assert_eq!(
+        role_provider_tool(Role::Search, "keenable"),
+        Some("keenable_search")
+    );
+    assert_eq!(
+        role_provider_tool(Role::Contents, "keenable"),
+        Some("keenable_fetch")
+    );
+    assert_eq!(role_provider_tool(Role::Answer, "keenable"), None);
+    assert_eq!(provider_roles("firecrawl"), [Role::Search, Role::Contents]);
+    assert_eq!(
+        role_provider_tool(Role::Search, "firecrawl"),
+        Some("firecrawl_search")
+    );
+    assert_eq!(
+        role_provider_tool(Role::Contents, "firecrawl"),
+        Some("firecrawl_scrape")
+    );
+    assert_eq!(role_provider_tool(Role::Answer, "firecrawl"), None);
+}
+
+#[test]
 fn provider_roles_and_defaults_match_the_contract() {
     for provider in ["exa", "parallel"] {
         assert_eq!(
@@ -152,29 +181,24 @@ fn provider_roles_and_defaults_match_the_contract() {
     assert_eq!(provider_roles("gemini_deep_research"), [Role::Answer]);
     assert_eq!(provider_roles("tinyfish"), [Role::Search, Role::Contents]);
     assert_eq!(provider_roles("tavily"), [Role::Search, Role::Contents]);
-    assert_eq!(provider_roles("keenable"), [Role::Search, Role::Contents]);
-    assert_eq!(
-        role_provider_tool(Role::Search, "keenable"),
-        Some("keenable_search")
-    );
-    assert_eq!(
-        role_provider_tool(Role::Contents, "keenable"),
-        Some("keenable_fetch")
-    );
-    assert_eq!(role_provider_tool(Role::Answer, "keenable"), None);
-    assert_eq!(provider_roles("firecrawl"), [Role::Search, Role::Contents]);
-    assert_eq!(
-        role_provider_tool(Role::Search, "firecrawl"),
-        Some("firecrawl_search")
-    );
-    assert_eq!(
-        role_provider_tool(Role::Contents, "firecrawl"),
-        Some("firecrawl_scrape")
-    );
-    assert_eq!(role_provider_tool(Role::Answer, "firecrawl"), None);
-    for provider in ["brave", "querit", "seltz", "searxng"] {
+    for provider in ["querit", "seltz"] {
         assert_eq!(provider_roles(provider), [Role::Search]);
     }
+    for provider in ["brave", "searxng"] {
+        assert_eq!(provider_roles(provider), [Role::Search, Role::Images]);
+    }
+    assert_eq!(
+        role_provider_tool(Role::Images, "brave"),
+        Some("brave_image_search")
+    );
+    assert_eq!(
+        role_provider_tool(Role::Images, "searxng"),
+        Some("searxng_search")
+    );
+    for provider in ["exa", "tavily", "querit", "gemini"] {
+        assert_eq!(role_provider_tool(Role::Images, provider), None);
+    }
+    assert_eq!(default_role_providers(Role::Images), ["brave", "searxng"]);
     assert_eq!(
         default_role_providers(Role::Search),
         [
@@ -313,6 +337,21 @@ fn backend_route_narrows_exa_search_and_gemini_models() {
     );
 }
 
+#[test]
+fn exa_search_offers_the_lite_type() {
+    let mut config = SearchConfig::default();
+    config.providers.insert("exa".into(), keyed("key"));
+    let available = configured_provider_tools(&config, &provider_tool_specs());
+    let exa_search = &available["exa"][0];
+    assert_eq!(exa_search.name, "exa_search");
+    let types = &exa_search.parameters["properties"]["type"]["enum"];
+    assert!(
+        types
+            .as_array()
+            .is_some_and(|types| types.contains(&json!("lite")))
+    );
+}
+
 fn role_config() -> SearchConfig {
     let mut config = SearchConfig::default();
     config.backend.credential = Some("session".into());
@@ -330,11 +369,20 @@ fn roles_mode_lists_one_tool_per_served_role() {
     let listed = select_tools(&available, &config.presentation);
     assert_eq!(
         names(&listed),
-        [tools::WEB_SEARCH, tools::WEB_ANSWER, tools::WEB_CONTENTS]
+        [
+            tools::WEB_SEARCH,
+            tools::WEB_ANSWER,
+            tools::WEB_CONTENTS,
+            tools::WEB_IMAGE_SEARCH
+        ]
     );
     assert_eq!(
         role_providers(&available, &config.presentation, Role::Search),
         ["exa", "brave", "tinyfish", "gemini"]
+    );
+    assert_eq!(
+        role_providers(&available, &config.presentation, Role::Images),
+        ["brave"]
     );
     assert_eq!(
         role_providers(&available, &config.presentation, Role::Answer),
@@ -353,7 +401,14 @@ fn roles_mode_without_backend_credential_drops_backend_providers() {
     let available = configured_provider_tools(&config, &provider_tool_specs());
     let listed = select_tools(&available, &config.presentation);
     // Own-key providers survive: TinyFish runs on its key, not the backend.
-    assert_eq!(names(&listed), [tools::WEB_SEARCH, tools::WEB_CONTENTS]);
+    assert_eq!(
+        names(&listed),
+        [
+            tools::WEB_SEARCH,
+            tools::WEB_CONTENTS,
+            tools::WEB_IMAGE_SEARCH
+        ]
+    );
     assert_eq!(
         listed.tools[0].parameters["properties"]["provider"]["enum"],
         json!(["brave", "tinyfish"])
@@ -512,4 +567,73 @@ fn legacy_modes_still_select_provider_tools() {
         ..PresentationConfig::default()
     };
     assert_eq!(names(&select_tools(&available, &router)), ["search"]);
+}
+
+#[test]
+fn image_role_tool_declares_a_small_query_schema() -> Result<(), String> {
+    let mut config = SearchConfig::default();
+    config.providers.insert("brave".into(), keyed("brave-key"));
+    config.providers.insert(
+        "searxng".into(),
+        ProviderConfig {
+            base_url: Some("https://searx.example".into()),
+            ..ProviderConfig::default()
+        },
+    );
+    let available = configured_provider_tools(&config, &provider_tool_specs());
+    let images =
+        role_tool_specs(&available, &config.presentation, Role::Images).ok_or("missing images")?;
+    assert_eq!(images.name, tools::WEB_IMAGE_SEARCH);
+    assert_eq!(images.name, "web_image_search_tool");
+    assert_eq!(images.parameters["required"], json!(["query"]));
+    assert_eq!(images.parameters["additionalProperties"], false);
+    let properties = images.parameters["properties"]
+        .as_object()
+        .ok_or("properties")?;
+    assert_eq!(
+        properties.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["count", "country", "max_results", "provider", "query"]
+    );
+    assert_eq!(
+        properties["max_results"],
+        json!({"type":"integer","minimum":1,"maximum":20})
+    );
+    assert_eq!(properties["count"]["maximum"], 20);
+    assert_eq!(properties["country"]["maxLength"], 2);
+    assert_eq!(properties["provider"]["enum"], json!(["brave", "searxng"]));
+    assert!(images.description.contains("Backed by: brave, searxng"));
+    assert!(images.description.contains("direct URL"));
+
+    // The order follows the configured image list.
+    config.presentation.roles.insert(
+        Role::Images,
+        vec!["searxng".into(), "exa".into(), "brave".into()],
+    );
+    assert_eq!(
+        role_providers(&available, &config.presentation, Role::Images),
+        ["searxng", "brave"]
+    );
+    Ok(())
+}
+
+#[test]
+fn roles_mode_offers_images_only_with_an_image_provider() {
+    let mut config = SearchConfig::default();
+    config.providers.insert("exa".into(), keyed("exa-key"));
+    let available = configured_provider_tools(&config, &provider_tool_specs());
+    assert_eq!(
+        names(&select_tools(&available, &config.presentation)),
+        [tools::WEB_SEARCH, tools::WEB_ANSWER, tools::WEB_CONTENTS]
+    );
+    config.providers.insert("brave".into(), keyed("brave-key"));
+    let available = configured_provider_tools(&config, &provider_tool_specs());
+    assert_eq!(
+        names(&select_tools(&available, &config.presentation)),
+        [
+            tools::WEB_SEARCH,
+            tools::WEB_ANSWER,
+            tools::WEB_CONTENTS,
+            tools::WEB_IMAGE_SEARCH
+        ]
+    );
 }

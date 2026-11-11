@@ -56,8 +56,9 @@ fn search_result_publication_is_optional_on_the_wire() -> serde_json::Result<()>
 fn provider_limits_round_trip_without_exposing_credential_in_debug() -> serde_json::Result<()> {
     let config: ProviderConfig = serde_json::from_value(serde_json::json!({
         "credential":"private-key", "max_results":12, "timeout_secs":8,
-        "default_language":"fr"
+        "default_language":"fr", "contents_max_chars":1500
     }))?;
+    assert_eq!(config.contents_max_chars, Some(1500));
     assert_eq!(config.max_results, Some(12));
     assert_eq!(config.timeout_secs, Some(8));
     assert_eq!(config.default_language.as_deref(), Some("fr"));
@@ -71,6 +72,7 @@ fn provider_limits_round_trip_without_exposing_credential_in_debug() -> serde_js
     assert_eq!(legacy.max_results, None);
     assert_eq!(legacy.timeout_secs, None);
     assert_eq!(legacy.default_language, None);
+    assert_eq!(legacy.contents_max_chars, None);
     Ok(())
 }
 
@@ -89,7 +91,14 @@ fn roles_and_role_lists_round_trip_as_snake_case() -> serde_json::Result<()> {
         serde_json::json!(["brave", "exa"])
     );
     assert_eq!(serde_json::to_value(Role::Contents)?, "contents");
+    assert_eq!(serde_json::to_value(Role::Images)?, "images");
     assert_eq!(Role::Answer.to_string(), "answer");
+    assert_eq!(Role::Images.to_string(), "images");
+    let images: PresentationConfig = serde_json::from_value(serde_json::json!({
+        "roles":{"images":["searxng","brave"]}
+    }))?;
+    assert_eq!(images.roles[&Role::Images], ["searxng", "brave"]);
+    assert_eq!(IMAGE_ASSETS, "image_assets");
     for mode in ["roles", "all_tools", "router", "one_provider"] {
         let decoded: PresentationMode = serde_json::from_value(serde_json::json!(mode))?;
         assert_eq!(serde_json::to_value(decoded)?, mode);
@@ -126,12 +135,17 @@ fn role_response_fields_are_optional_on_the_wire() -> serde_json::Result<()> {
 
 #[test]
 fn role_helpers_round_trip_config_keys() {
-    assert_eq!(ROLES, [Role::Search, Role::Answer, Role::Contents]);
+    assert_eq!(
+        ROLES,
+        [Role::Search, Role::Answer, Role::Contents, Role::Images]
+    );
     for role in ROLES {
         assert_eq!(parse_role(role_key(role)), Some(role));
         assert_eq!(parse_role(&format!("  {} ", role_key(role))), Some(role));
     }
     assert_eq!(role_key(Role::Contents), "contents");
+    assert_eq!(role_key(Role::Images), "images");
+    assert_eq!(parse_role("images"), Some(Role::Images));
     assert_eq!(parse_role("Search"), None);
     assert_eq!(parse_role("nope"), None);
 }

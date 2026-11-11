@@ -42,6 +42,7 @@ role that has at least one usable provider:
 | `search` | `web_search_tool` | `query`, `max_results?` (1-20), `provider?` | exa, brave, tavily, parallel, querit, seltz, searxng, tinyfish, keenable, firecrawl, gemini |
 | `answer` | `web_answer_tool` | `query`, `depth?` (`quick` or `deep`), `provider?` | gemini, gemini_deep_research, exa, parallel |
 | `contents` | `web_contents_tool` | `urls` (1-10), `query?`, `provider?` | exa, tavily, parallel, tinyfish, keenable, firecrawl |
+| `images` | `web_image_search_tool` | `query`, `max_results?` (1-20, alias `count`), `country?` (2 letters), `provider?` | brave, searxng |
 
 `presentation.roles` sets an ordered provider list per role; an absent or empty
 list uses the default order above. The first usable provider answers. When it
@@ -57,6 +58,24 @@ Parallel serves only quick answers, so a `deep` call skips it, and pinning
 When Deep Research is not usable, `deep` is still declared and is answered at
 quick depth by the quick providers (Parallel included), so callers that ask for
 `deep` are never rejected for it.
+
+`images` searches for images: Brave through `brave_image_search`, SearXNG
+through `searxng_search` with its `images` category. `country` reaches Brave
+only. Its response lists the images under `provider_data.image_assets`
+(`tinysearch_bus::IMAGE_ASSETS`), one `{image_url, source_url, title?}` entry
+per image, and `results[i]` is the page image `i` appears on, so a result
+without an image is never returned and a response with no image is `empty`.
+The canonical renderings in `tinysearch_bus::render` print each image's URL
+under its page (`Image: <url>` in text, an inline image in markdown).
+Tavily's `include_images` is not used: it returns image URLs without the page
+each one came from.
+
+`tinysearch_bus::render::RenderOptions` tunes the renderings: `excerpt_chars`
+and `contents_chars` set the snippet and per-page caps, and `compact_sources`
+leaves out `Sources` entries that repeat a listed result (`RenderOptions::compact()`
+turns on both that and a 1,500-character page cap). `render_text_with` and
+`render_markdown_with` take the options; `render_text` and `render_markdown`
+keep the defaults, the original output.
 
 `all_tools` exposes every available provider tool, `one_provider` exposes one
 provider's tools, and `router` exposes one `search` tool that runs the chosen
@@ -79,7 +98,9 @@ classify the failure, the message starts with `tinysearch.<code>: `, and
 A direct provider requires its own credential unless it is explicitly keyless.
 A backend route requires a backend credential. Search can be disabled globally.
 Provider configuration includes a route, optional base URL, credential,
-`max_results`, `timeout_secs`, and a SearXNG `default_language`.
+`max_results`, `timeout_secs`, a SearXNG `default_language`, and
+`contents_max_chars`, which caps each page an Exa contents call returns
+(unset asks for whole pages; at most 1,500 is kept either way).
 Debug output redacts credentials.
 
 ```sh
@@ -108,12 +129,17 @@ and `/answer` with `x-api-key`. On the backend route they call
 `/agent-integrations/exa/{search,findSimilar,contents,answer}`. The backend's
 search takes only `{objective, searchQueries}`, so the backend `exa_search`
 schema accepts only `query`, sent as both; the other routes forward Exa's own
-request bodies.
+request bodies. Direct `exa_search` sends `type: "lite"`, Exa's low-latency
+tier, unless the caller chose a type. `lite` reads Exa's index without fetching
+pages, so results with no cached copy are left out when text or highlights are
+requested.
 
 Gemini's `gemini_agentic_search` calls `generateContent` with Google Search
 grounding: directly with `x-goog-api-key`, or through
 `/agent-integrations/gemini/models/{model}/generate-content`, whose schema
 limits `model` to the backend's allowlist (default `gemini-3.8-flash`). The
+default model runs with `thinkingLevel: low`, on both routes, to keep grounded
+calls fast; a different `model` keeps that model's own thinking default. The
 answer joins the candidate's text parts, and citations list the grounding
 chunks that `groundingSupports` reference first, then the rest.
 For the Search role, the same grounded call returns deduplicated HTTP(S)

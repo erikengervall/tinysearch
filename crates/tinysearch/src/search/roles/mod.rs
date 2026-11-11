@@ -6,8 +6,8 @@ use crate::{Error, Result};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use tinysearch_bus::{
-    ExecuteToolRequest, ExecuteToolResponse, Role, ToolSpec, role_for_tool, role_provider_tool,
-    role_providers, role_tool_specs,
+    ExecuteToolRequest, ExecuteToolResponse, IMAGE_ASSETS, Role, SearchResult, SearchStatus,
+    ToolSpec, role_for_tool, role_provider_tool, role_providers, role_tool_specs,
 };
 
 /// The provider that serves only `depth: "deep"` answers.
@@ -86,6 +86,9 @@ impl SearchService {
                     if role == Role::Search && provider == "gemini" {
                         self.bound_gemini_search(result_count(args).as_u64(), &mut response)?;
                     }
+                    if role == Role::Images {
+                        align_image_results(&mut response);
+                    }
                     response.role = Some(role);
                     response.fallback_from = failed;
                     return Ok(response);
@@ -130,16 +133,60 @@ fn answer_order(mut usable: Vec<String>, args: &Map<String, Value>) -> Vec<Strin
     usable
 }
 
-/// The requested result count: `max_results`, else its `limit` alias.
+/// The requested result count: `max_results`, else its `limit` (Search) or
+/// `count` (Images) alias.
 fn result_count(args: &Map<String, Value>) -> Value {
     args.get("max_results")
         .or_else(|| args.get("limit"))
+        .or_else(|| args.get("count"))
         .cloned()
         .unwrap_or(Value::Null)
 }
 
+/// Makes an Images role response list exactly the images it found.
+///
+/// `provider_data.image_assets` is the authoritative image list: each entry
+/// carries `image_url` (the image itself), `source_url` (the page it appears
+/// on) and, when the provider gave one, `title`. The results are rebuilt from
+/// it so that `results[i]` is the source page of `image_assets[i]`, and a
+/// response without any image is `empty` rather than `ok`.
+fn align_image_results(response: &mut ExecuteToolResponse) {
+    let assets: Vec<Value> = response
+        .provider_data
+        .as_ref()
+        .and_then(|data| data.get(IMAGE_ASSETS))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    response.results = assets
+        .iter()
+        .filter_map(|asset| {
+            let url = asset.get("source_url")?.as_str()?;
+            Some(SearchResult {
+                title: asset
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+                url: url.to_owned(),
+                snippet: None,
+                published: None,
+            })
+        })
+        .collect();
+    response.status = if response.results.is_empty() {
+        SearchStatus::Empty
+    } else {
+        SearchStatus::Ok
+    };
+}
+
 /// Translates generic role arguments into `provider`'s own tool arguments,
 /// keeping only the fields the provider tool declares.
+///
+/// The search role defaults `include_highlights` on, so a provider that
+/// supports inline highlights (Exa) returns query-relevant snippets with each
+/// result and the caller can answer without a follow-up contents fetch.
 pub(super) fn provider_arguments(
     role: Role,
     provider: &str,
@@ -160,7 +207,21 @@ pub(super) fn provider_arguments(
             } else {
                 "max_results"
             };
-            json!({"query":get("query"), count_field:result_count(args)})
+            // Ask for query-relevant highlights inline so the search result
+            // carries enough content to answer without a separate contents
+            // fetch (one fewer model round trip). Providers whose tool does not
+            // declare `include_highlights` drop it in the `retain` below, so
+            // only providers that support it (Exa) are affected; a caller may
+            // still override the default by passing the field itself.
+            let highlights = args
+                .get("include_highlights")
+                .cloned()
+                .unwrap_or(Value::Bool(true));
+            json!({
+                "query":get("query"),
+                count_field:result_count(args),
+                "include_highlights":highlights
+            })
         }
         // Parallel answers through its chat completions API.
         Role::Answer if provider == "parallel" => json!({
@@ -181,6 +242,17 @@ pub(super) fn provider_arguments(
             }
             mapped
         }
+        // SearXNG serves images through its `images` category.
+        Role::Images if provider == "searxng" => json!({
+            "query":get("query"),
+            "categories":["images"],
+            "max_results":result_count(args)
+        }),
+        Role::Images => json!({
+            "query":get("query"),
+            "count":result_count(args),
+            "country":get("country")
+        }),
     };
     let declared = tool.parameters.get("properties").and_then(Value::as_object);
     if let Some(fields) = mapped.as_object_mut() {
@@ -194,6 +266,10 @@ pub(super) fn provider_arguments(
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod test;
+
+#[cfg(test)]
+#[path = "mod_images_tests.rs"]
+mod images_test;
 
 /// Drops `depth: "deep"` when Deep Research is not among the role's usable
 /// providers, so the call is answered at quick depth instead of failing.
